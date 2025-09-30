@@ -1,0 +1,110 @@
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill
+import random
+import Levenshtein
+import unicodedata
+
+# ------------------------ PARAMETERS ------------------------
+file_path = 'Bahis/Bahraich-2.xlsx'
+highlight_columns = ['Caste', 'SubCaste', 'District', 'Village/City', 'Gotra']
+similarity_threshold = 70
+output_file = 'Bahi_highlighted/Bahraich-2_highlighted.xlsx'
+
+# ------------------------ LOAD DATA ------------------------
+df = pd.read_excel(file_path, sheet_name='Sheet1')
+
+# ------------------------ HELPER FUNCTIONS ------------------------
+def random_pastel_color():
+    r = random.randint(150, 255)
+    g = random.randint(150, 255)
+    b = random.randint(150, 255)
+    return "FF{:02X}{:02X}{:02X}".format(r, g, b)
+
+def normalize_text(text):
+    """Normalize Unicode text to NFC form."""
+    return unicodedata.normalize('NFC', str(text).strip())
+
+def similarity(a, b):
+    """Compute Levenshtein similarity as percentage."""
+    return Levenshtein.ratio(a, b) * 100
+
+def cluster_values(values, threshold=70):
+    """Cluster similar values together so they appear closer."""
+    clusters = []
+    visited = [False] * len(values)
+
+    for i, val in enumerate(values):
+        if visited[i] or pd.isna(val) or str(val).strip() == "":
+            continue
+
+        current_cluster = [val]
+        visited[i] = True
+
+        for j in range(i + 1, len(values)):
+            if visited[j] or pd.isna(values[j]) or str(values[j]).strip() == "":
+                continue
+
+            if any(similarity(normalize_text(values[j]), normalize_text(v)) >= threshold for v in current_cluster):
+                current_cluster.append(values[j])
+                visited[j] = True
+
+        clusters.append(current_cluster)
+
+    # Flatten clusters back into a single sorted list
+    clustered_list = [item for cluster in clusters for item in cluster]
+    return clusters, clustered_list
+
+def fuzzy_highlight(ws, col_idx, clusters):
+    """Apply colors to each cluster group."""
+    for cluster in clusters:
+        if len(cluster) <= 1:
+            continue
+        fill_color = PatternFill(
+            start_color=random_pastel_color(),
+            end_color=random_pastel_color(),
+            fill_type="solid"
+        )
+        # Highlight all items in the cluster
+        for row in range(2, ws.max_row + 1):
+            cell_value = ws.cell(row=row, column=col_idx).value
+            if cell_value in cluster:
+                ws.cell(row=row, column=col_idx).fill = fill_color
+
+# ------------------------ CREATE OUTPUT WORKBOOK ------------------------
+wb = Workbook()
+
+# Remove default sheet
+if 'Sheet' in wb.sheetnames:
+    std = wb['Sheet']
+    wb.remove(std)
+
+# ------------------------ CREATE SHEETS AND ADD CLUSTERED UNIQUES ------------------------
+sheet_names = {
+    'Caste': 'Caste',
+    'SubCaste': 'SubCaste',
+    'Gotra': 'Gotra',
+    'District': 'District',
+    'Village/City': 'Village'
+}
+
+for col, sheet_name in sheet_names.items():
+    ws = wb.create_sheet(sheet_name)
+    uniques = sorted(df[col].dropna().unique(), key=lambda x: str(x))
+    
+    # Cluster values so similar ones are grouped
+    clusters, clustered_list = cluster_values(uniques, threshold=similarity_threshold)
+
+    # Write header
+    ws.cell(row=1, column=1).value = col
+
+    # Write clustered values
+    for idx, val in enumerate(clustered_list, start=2):
+        ws.cell(row=idx, column=1).value = val
+
+    # Apply fuzzy highlight
+    fuzzy_highlight(ws, col_idx=1, clusters=clusters)
+
+# ------------------------ SAVE WORKBOOK ------------------------
+wb.save(output_file)
+print(f"✅ Done! Clustered and highlighted values saved in '{output_file}'.")
