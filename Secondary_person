@@ -1,0 +1,118 @@
+from fuzzywuzzy import fuzz
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+import pandas as pd
+
+file_path = 'Bahis/Bahraich-2.xlsx'
+sheet_name = 'Sheet1'
+relation_column = 'Relation'
+id_column = 'Individual ID'
+given_name_column = 'Given Name'
+output_file = 'Bahraich_relation_highlighted.xlsx'
+
+highlight_color = PatternFill(start_color="FF77DD77", end_color="FF77DD77", fill_type="solid")
+threshold = 85  # similarity threshold for minor spelling variations
+
+# Load data
+df = pd.read_excel(file_path, sheet_name=sheet_name)
+wb = load_workbook(file_path)
+ws1 = wb[sheet_name]
+
+# Create/get Sheet3
+if 'Sheet3' in wb.sheetnames:
+    ws3 = wb['Sheet3']
+    ws3.delete_rows(2, ws3.max_row)  # Clear existing data except header
+else:
+    ws3 = wb.create_sheet('Sheet3')
+
+# Copy header
+for col_idx, cell in enumerate(ws1[1], start=1):
+    ws3.cell(row=1, column=col_idx).value = cell.value
+
+# Helper functions
+def find_column_index(ws, col_name):
+    for idx, cell in enumerate(ws[1], start=1):
+        if str(cell.value).strip() == col_name:
+            return idx
+    raise ValueError(f"Column '{col_name}' not found.")
+
+def extract_connected_person(relation_text):
+    """Extract the person mentioned in the relation"""
+    if pd.isna(relation_text) or relation_text == "":
+        return None
+    
+    relation_text = str(relation_text).strip()
+    
+    # Common relation patterns in Hindi
+    patterns = [
+        ' के ', ' की ', ' का ', ' को ', ' से ', ' में ', ' पर '
+    ]
+    
+    for pattern in patterns:
+        if pattern in relation_text:
+            # Extract the part before the relation pattern
+            parts = relation_text.split(pattern)
+            if len(parts) > 0:
+                return parts[0].strip()
+    
+    return relation_text
+
+def is_similar_name(name1, name2, threshold=85):
+    """Check if two names are similar using fuzzy matching"""
+    if pd.isna(name1) or pd.isna(name2):
+        return False
+    return fuzz.partial_ratio(str(name1).strip(), str(name2).strip()) >= threshold
+
+# Get column indices
+relation_col_idx = find_column_index(ws1, relation_column)
+given_name_col_idx = find_column_index(ws1, given_name_column)
+id_col_idx = find_column_index(ws1, id_column)
+
+row_idx_sheet3 = 2  # Start from row 2 in Sheet3 (after header)
+
+# Family validation
+n_rows = df.shape[0]
+i = 0
+
+while i < n_rows:
+    if df.at[i, id_column] == 1:  # new family
+        family_start = i
+        primary_name = str(df.at[i, given_name_column]).strip()
+        
+        # Find family end
+        family_end = family_start
+        for j in range(family_start + 1, n_rows):
+            if df.at[j, id_column] == 1:
+                break
+            family_end = j
+        
+        # Check relations for all family members except the primary
+        for k in range(family_start + 1, family_end + 1):
+            relation_text = str(df.at[k, relation_column]).strip()
+            
+            if relation_text == "" or pd.isna(relation_text):
+                continue  # Skip empty relations
+            
+            # Extract the person mentioned in the relation
+            connected_person = extract_connected_person(relation_text)
+            
+            if connected_person:
+                # Check if the connected person is NOT the primary person
+                if not is_similar_name(connected_person, primary_name, threshold):
+                    # This is a mismatch - connected to someone else in the family
+                    print(f"Mismatch found: Row {k+2}, '{connected_person}' is not similar to primary '{primary_name}'")
+                    
+                    # Highlight in Sheet1
+                    ws1.cell(row=k+2, column=relation_col_idx).fill = highlight_color
+                    
+                    # Copy entire row to Sheet3
+                    for col_idx, cell in enumerate(ws1[k+2], start=1):
+                        ws3.cell(row=row_idx_sheet3, column=col_idx).value = cell.value
+                    row_idx_sheet3 += 1
+
+        i = family_end + 1
+    else:
+        i += 1
+
+wb.save(output_file)
+print(f"Done! Family relation mismatches highlighted in Sheet1 and copied to Sheet3: {output_file}")
