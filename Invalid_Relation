@@ -1,0 +1,43 @@
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+import re
+
+# Load the Excel file
+file_path = "Bahis/Bahraich-2.xlsx"
+sheet_name = "Sheet1"  # Change as needed
+
+# Read Excel into pandas
+df = pd.read_excel(file_path, sheet_name=sheet_name)
+
+# Define the regex pattern for expected Relation format
+# Hindi letters \u0900-\u097F, connectors: का, की, के
+pattern = re.compile(r"^[\u0900-\u097F\s]+ (का|की|के) [\u0900-\u097F\s]+$")
+
+# Load workbook with openpyxl
+wb = load_workbook(file_path)
+ws = wb[sheet_name]
+
+# Fill color for highlighting
+highlight = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+
+# Get the column index of 'Relation'
+relation_col_idx = None
+for idx, cell in enumerate(ws[1], start=1):
+    if cell.value == "Relation":
+        relation_col_idx = idx
+        break
+
+if relation_col_idx is None:
+    raise ValueError("No 'Relation' column found in the sheet.")
+
+# Iterate through the Relation column and highlight if pattern does not match
+for row in range(2, ws.max_row + 1):
+    cell = ws.cell(row=row, column=relation_col_idx)
+    value = str(cell.value) if cell.value else ""
+    if not pattern.match(value):
+        cell.fill = highlight
+
+# Save the updated workbook
+wb.save("highlighted_invalid_relation.xlsx")
+print("Done! Cells not matching the expected pattern are highlighted.")
